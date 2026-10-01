@@ -1559,6 +1559,21 @@ impl Bind<EGLSurface> for GlesRenderer {
     }
 }
 
+/// test-only: SMITHAY_GLES_DMABUF_BIND=renderbuffer skips the texture bind path.
+fn use_renderbuffer_bind() -> bool {
+    static FORCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FORCE.get_or_init(|| {
+        let rb = std::env::var("SMITHAY_GLES_DMABUF_BIND")
+            .map(|v| v.eq_ignore_ascii_case("renderbuffer"))
+            .unwrap_or(false);
+        eprintln!(
+            "smithay: dmabuf bind path = {}",
+            if rb { "renderbuffer" } else { "texture" }
+        );
+        rb
+    })
+}
+
 impl Bind<Dmabuf> for GlesRenderer {
     fn bind<'a>(&mut self, dmabuf: &'a mut Dmabuf) -> Result<GlesTarget<'a>, GlesError> {
         let mut bind = |dmabuf: &'a mut Dmabuf| {
@@ -1567,13 +1582,15 @@ impl Bind<Dmabuf> for GlesRenderer {
                 return Err(GlesError::FramebufferBindingError);
             }
 
-            if let Ok(target) = self
-                .bind_texture(&texture)
-                // SAFETY: The lifetime of the target only depends on the dmabuf,
-                // as the GlesTexture is cloned internally.
-                .map(|tex| unsafe { std::mem::transmute::<GlesTarget<'_>, GlesTarget<'a>>(tex) })
-            {
-                return Ok(target);
+            if !use_renderbuffer_bind() {
+                if let Ok(target) = self
+                    .bind_texture(&texture)
+                    // SAFETY: The lifetime of the target only depends on the dmabuf,
+                    // as the GlesTexture is cloned internally.
+                    .map(|tex| unsafe { std::mem::transmute::<GlesTarget<'_>, GlesTarget<'a>>(tex) })
+                {
+                    return Ok(target);
+                }
             }
 
             let buf = self
